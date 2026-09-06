@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <array>
 #include <string>
 #include <vector>
 #include <thread>
@@ -125,14 +126,18 @@ static void threadCamera(Camera* cam) {
 // ─── threadRender ────────────────────────────────────────────────────────────
 static void threadRender(DrmDisplay* drm,
                          const GlyphAtlas* atlas,
-                         int conCharWidth, int conCharHeight,
-                         int cellWidth,    int cellHeight,
-                         int glyphPovMin,  int glyphPovMax)
+                         int camFrameWidth, int camFrameHeight,
+                         int conCharWidth,  int conCharHeight,
+                         int cellWidth,     int cellHeight,
+                         int glyphPovMin,   int glyphPovMax)
 {
     try {
-        dbgLog("[threadRender] started  grid=%dx%d  cell=%dx%d  drm=%dx%d  pov=[%d,%d)",
-               conCharWidth, conCharHeight, cellWidth, cellHeight,
-               drm->width(), drm->height(), glyphPovMin, glyphPovMax);
+        dbgLog("[threadRender] started  cam=%dx%d  grid=%dx%d  cell=%dx%d  drm=%dx%d  pov=[%d,%d)",
+               camFrameWidth, camFrameHeight,
+               conCharWidth, conCharHeight,
+               cellWidth, cellHeight,
+               drm->width(), drm->height(),
+               glyphPovMin, glyphPovMax);
 
         const uint32_t stride = drm->stride();
         const int      drmW   = drm->width();
@@ -152,6 +157,41 @@ static void threadRender(DrmDisplay* drm,
             int    count    = 0;
         };
         std::vector<CellAccum> accums((size_t)cellCount);
+
+        std::vector<int> rowToCellY;
+        std::vector<int> colToCellX;
+        std::vector<int> cellXPixels((size_t)conCharWidth);
+        std::vector<int> cellYPixels((size_t)conCharHeight);
+        std::array<const GlyphRaster*, 101> frameGlyphCache{};
+
+        if ((int)rowToCellY.size() != camFrameWidth) {
+            rowToCellY.resize((size_t)camFrameWidth);
+            for (int py = 0; py < camFrameWidth; ++py) {
+                int cy = py * conCharHeight / camFrameWidth;
+                if (cy >= conCharHeight) cy = conCharHeight - 1;
+                rowToCellY[(size_t)py] = cy;
+            }
+        }
+        if ((int)colToCellX.size() != camFrameHeight) {
+            colToCellX.resize((size_t)camFrameHeight);
+            for (int px = 0; px < camFrameHeight; ++px) {
+                int cx = px * conCharWidth / camFrameHeight;
+                if (cx >= conCharWidth) cx = conCharWidth - 1;
+                colToCellX[(size_t)px] = cx;
+            }
+        }
+        if ((int)cellXPixels.size() != conCharWidth) {
+            cellXPixels.resize((size_t)conCharWidth);
+            for (int cx = 0; cx < conCharWidth; ++cx) {
+                cellXPixels[(size_t)cx] = cx * cellWidth;
+            }
+        }
+        if ((int)cellYPixels.size() != conCharHeight) {
+            cellYPixels.resize((size_t)conCharHeight);
+            for (int cy = 0; cy < conCharHeight; ++cy) {
+                cellYPixels[(size_t)cy] = cy * cellHeight;
+            }
+        }
 
         constexpr int MID = 128;
         long renderCount = 0;
@@ -179,12 +219,10 @@ static void threadRender(DrmDisplay* drm,
             for (auto& a : accums) { a = {}; }
 
             for (int py = 0; py < fH; ++py) {
-                int cy = py * conCharHeight / fH;
-                if (cy >= conCharHeight) cy = conCharHeight - 1;
+                int cy = rowToCellY[(size_t)py];
                 const uint8_t* row = rgb + (size_t)py * (size_t)fW * 3;
                 for (int px = 0; px < fW; ++px) {
-                    int cx = px * conCharWidth / fW;
-                    if (cx >= conCharWidth) cx = conCharWidth - 1;
+                    int cx = colToCellX[(size_t)px];
                     uint8_t r = row[px * 3 + 0];
                     uint8_t g = row[px * 3 + 1];
                     uint8_t b = row[px * 3 + 2];
@@ -230,17 +268,25 @@ static void threadRender(DrmDisplay* drm,
             // ── composit-console-frame ─────────────────────────────────────
             drm->clearBackBuffer();
             uint8_t* fb = drm->getBackBuffer();
+            frameGlyphCache.fill(nullptr);
 
             int glyphsBlitted = 0;
             for (int cy = 0; cy < conCharHeight; ++cy) {
+                const int destY = cellYPixels[(size_t)cy];
                 for (int cx = 0; cx < conCharWidth; ++cx) {
                     const CellStat& cs = cellStats[(size_t)(cy * conCharWidth + cx)];
-                    int lumKey = (int)std::round(cs.avgLum);
-                    const GlyphRaster* thisRaster = atlas->findWithPov(lumKey, glyphPovMin, glyphPovMax);
+                    int lumKey = (int)std::lround(cs.avgLum);
+                    if (lumKey < 0) lumKey = 0;
+                    else if (lumKey > 100) lumKey = 100;
+
+                    const GlyphRaster* thisRaster = frameGlyphCache[(size_t)lumKey];
+                    if (!thisRaster) {
+                        thisRaster = atlas->findWithPov(lumKey, glyphPovMin, glyphPovMax);
+                        frameGlyphCache[(size_t)lumKey] = thisRaster;
+                    }
                     if (!thisRaster) continue;
 
-                    int destX = cx * cellWidth;
-                    int destY = cy * cellHeight;
+                    const int destX = cellXPixels[(size_t)cx];
 
                     for (int gy = 0; gy < thisRaster->height; ++gy) {
                         int sy = destY + gy;
@@ -326,9 +372,9 @@ int main(int argc, char* argv[]) {
         int conPixelsWide = 1920;
         int conPixelsHigh = 1080;
         std::string cameraDevice    = "/dev/video0";
-        int cameraFrameWidth  = 1920;
-        int cameraFrameHeight = 1080;
-        int frameRate         = 30;
+        int camFrameWidth  = 1920;
+        int camFrameHeight = 1080;
+        int frameRate      = 30;
         std::vector<std::string> fontFiles;
         int dropFramesAfter = 4;
         std::string drmDevice  = "/dev/dri/card0";
@@ -337,7 +383,7 @@ int main(int argc, char* argv[]) {
         int glyphPovMax = 60;
 
         static const option longOpts[] = {
-            {"console-dimensions", required_argument, nullptr, 'd'},
+            {"console-dimensions",  required_argument, nullptr, 'd'},
             {"console-resolution",  required_argument, nullptr, 'r'},
             {"camera",              required_argument, nullptr, 'c'},
             {"camera-config",       required_argument, nullptr, 'C'},
@@ -376,8 +422,8 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "Invalid --camera-config: %s (expected WxHxFPS)\n", optarg);
                     return 1;
                 }
-                cameraFrameWidth  = w;
-                cameraFrameHeight = h;
+                camFrameWidth  = w;
+                camFrameHeight = h;
                 frameRate         = fps;
                 break;
             }
@@ -444,7 +490,7 @@ int main(int argc, char* argv[]) {
                conCharWidth, conCharHeight,
                conPixelsWide, conPixelsHigh,
                cameraDevice.c_str(),
-               cameraFrameWidth, cameraFrameHeight, frameRate);
+               camFrameWidth, camFrameHeight, frameRate);
         dbgLog("[main] drm-device=%s  drop-frames-after=%d  glyph-pov=[%d,%d)",
                drmDevice.c_str(), dropFramesAfter, glyphPovMin, glyphPovMax);
         for (size_t i = 0; i < fontFiles.size(); ++i)
@@ -472,14 +518,14 @@ int main(int argc, char* argv[]) {
         {
             bool resAvail = false;
             for (const auto& fs : cam.availableFrameSizes()) {
-                if (fs.width == cameraFrameWidth && fs.height == cameraFrameHeight) {
+                if (fs.width == camFrameWidth && fs.height == camFrameHeight) {
                     resAvail = true; break;
                 }
             }
             if (!resAvail && !cam.availableFrameSizes().empty()) {
                 fprintf(stderr, "Warning: camera resolution %dx%d not in discrete list; "
                                 "driver will negotiate.\n",
-                        cameraFrameWidth, cameraFrameHeight);
+                        camFrameWidth, camFrameHeight);
             }
         }
         // font-file-checks: non-zero list and paths exist
@@ -525,9 +571,9 @@ int main(int argc, char* argv[]) {
         }
 
         // configure-camera: set resolution per camera-config
-        if (!cam.configure(cameraFrameWidth, cameraFrameHeight, frameRate)) {
+        if (!cam.configure(camFrameWidth, camFrameHeight, frameRate)) {
             fprintf(stderr, "Error: failed to configure camera at %dx%d@%dfps\n",
-                    cameraFrameWidth, cameraFrameHeight, frameRate);
+                    camFrameWidth, camFrameHeight, frameRate);
             return 1;
         }
         if (!cam.startCapture()) {
@@ -561,9 +607,10 @@ int main(int argc, char* argv[]) {
         // ── Launch threads ─────────────────────────────────────────────────────
         std::thread tCamera(threadCamera, &cam);
         std::thread tRender(threadRender, &drm, &atlas,
-                            conCharWidth, conCharHeight,
-                            cellWidth,    cellHeight,
-                            glyphPovMin,  glyphPovMax);
+                            camFrameWidth, camFrameHeight,
+                            conCharWidth,  conCharHeight,
+                            cellWidth,     cellHeight,
+                            glyphPovMin,   glyphPovMax);
 
         // Wait for both threads to finish
         tCamera.join();
