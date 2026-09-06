@@ -1,0 +1,158 @@
+Banana Pi M2 Zero wifi config: Armbian offers little for connecting to the internet in the default image.  The following are my notes for authenticating to a wifi AP, after having connected via serial console.  (Armbian for BPI-M2-Zero, based on Debian 13.6 Trixie, does not provide support for USB OTG -which would allow connection of a keyboard, mouse ethernet dongle and so forth.  Hard corner.)
+
+1. Find interface (e.g. wlan0)
+iw dev
+
+2. Bring interface up
+sudo ip link set wlan0 up
+
+3. Create wpa2 conf
+sudo install -m 600 /dev/null /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+wpa_passphrase "YourSSID" "YourPassphrase" | sudo tee /etc/wpa_supplicant/wpa_supplicant-wlan0.conf >/dev/null
+sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+4. Connect on nl80211 driver
+sudo wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant-wlan0.conf -D nl80211
+
+5. Request IPv4 lease (usually one of these clients is installed) **FAILS**
+sudo dhclient wlan0 || sudo dhcpcd wlan0 || sudo udhcpc -i wlan0
+
+6. If a dhcp client exists, next steps:
+iw dev wlan0 link
+ip -4 addr show dev wlan0
+ip route
+getent hosts debian.org
+
+7. Prepare for manual IP since no dhcp client in Armbian BPI M2 Zero build
+# reset wifi stack
+sudo pkill wpa_supplicant
+sudo ip link set wlan0 down
+sudo ip link set wlan0 up
+
+8. Confirm ap is visible
+sudo iw dev wlan0 scan | grep -E 'SSID:|RSN:|WPA:|signal:' -A2
+
+9. Now create a stricter config for WPA2-PSK/CCMP:
+sudo tee /etc/wpa_supplicant/wpa_supplicant-wlan0.conf >/dev/null <<'EOF'
+ctrl_interface=/run/wpa_supplicant
+update_config=1
+country=US
+
+network={
+    ssid="DECnet"
+    psk="bill evans stan getz"
+    key_mgmt=WPA-PSK
+    proto=RSN
+    pairwise=CCMP
+    group=CCMP
+    scan_ssid=1
+    priority=10
+}
+EOF
+
+sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+9. Start supplicant, check status:
+sudo wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant-wlan0.conf -D nl80211
+sudo wpa_cli -i wlan0 status
+sudo iw dev wlan0 link
+
+10. Look for these facts in wpa_cli status:
+wpa_state=COMPLETED
+non-empty ssid=...
+valid bssid=...
+
+11. Since Armbian currently lacks DHCP tooling, use temporary static networking after Wi-Fi is connected:
+MANUAL_IP=10.0.1.135
+NETMASK=16
+GATEWAY_IP=10.0.0.1
+
+sudo ip addr add $MANUAL_IP/$NETMASK dev wlan0
+sudo ip route add default via $GATEWAY_IP
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf >/dev/null
+
+12. Test
+ping -c 3 $GATEWAY_IP
+ping -c 3 1.1.1.1
+getent hosts debian.org
+
+13. Now add dhcp client
+apt update
+sudo apt update
+sudo apt install -y isc-dhcp-client
+sudo dhclient wlan0
+
+14. Switch to dhcp client
+- Enable wpa_supplicant service for wlan0
+sudo systemctl enable wpa_supplicant@wlan0.service
+
+- Create a one-shot DHCP service (if distro doesn't provide one)
+sudo tee /etc/systemd/system/dhclient@.service >/dev/null <<'EOF'
+[Unit]
+Description=ISC DHCP client on %I
+After=network-pre.target wpa_supplicant@%i.service
+Wants=network-pre.target wpa_supplicant@%i.service
+
+[Service]
+Type=forking
+PIDFile=/run/dhclient.%i.pid
+ExecStart=/sbin/dhclient -4 -pf /run/dhclient.%i.pid -lf /var/lib/dhcp/dhclient.%i.leases %I
+ExecStop=/sbin/dhclient -r -pf /run/dhclient.%i.pid %I
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+- Reload systemd and enable DHCP for wlan0
+sudo systemctl daemon-reload
+sudo systemctl enable dhclient@wlan0.service
+
+- Start it now (or reboot)
+sudo systemctl start wpa_supplicant@wlan0.service
+sudo systemctl start dhclient@wlan0.service
+
+- secure the PSK
+sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+
+15. Now reboot the SBC and verify whether dhcp client receives a lease
+sudo reboot
+...
+systemctl --no-pager --full status wpa_supplicant@wlan0.service
+systemctl --no-pager --full status dhclient@wlan0.service
+iw dev wlan0 link
+ip -4 addr show dev wlan0
+ip route
+getent hosts debian.org
+
+16. Deal with ssh connections stalling / hanging.
+sudo iw dev wlan0 set power_save off
+sudo iw dev wlan0 get power_save
+
+17. Might've been power_save, but might be processes taking over CPU, but let's make that change persistent
+sudo tee /etc/systemd/system/wifi-powersave-off.service >/dev/null <<'EOF'
+[Unit]
+Description=Disable WiFi power save on wlan0
+After=network-pre.target
+Before=wpa_supplicant@wlan0.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw dev wlan0 set power_save off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now wifi-powersave-off.service
+
+18. Harden ssh against idle path breakage; ensure the following in /etc/ssh/sshd_config
+ClientAliveInterval 30
+ClientAliveCountMax 3
+TCPKeepAlive yes
+
+- Restart sshd
+sudo systemctl restart ssh
