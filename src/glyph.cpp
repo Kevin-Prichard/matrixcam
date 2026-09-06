@@ -1,6 +1,7 @@
 #include "glyph.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -124,8 +125,9 @@ const GlyphRaster* GlyphAtlas::findClosest(int luminosity) const {
 const GlyphRaster* GlyphAtlas::findWithPov(int luminosity, int povMin, int povMax) const {
     // Clamp inputs so povMax > povMin is always true.
     if (povMax <= povMin) povMax = povMin + 1;
+    luminosity = std::clamp(luminosity, 0, 100);
 
-    LumGlyphPovTracker& tracker = lumGlyphPovMap_[luminosity];
+    LumGlyphPovTracker& tracker = lumGlyphPovMap_[(size_t)luminosity];
 
     // Reuse cached glyph while the countdown is still positive.
     if (tracker.raster != nullptr && tracker.framesLeft-- > 0) {

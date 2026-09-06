@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <vector>
 #include <map>
 #include <memory>
@@ -60,7 +61,7 @@ private:
     std::map<int, std::vector<std::unique_ptr<GlyphRaster>>> lumGlyphRasterMap_;
 
     // POV cache: one tracker per luminosity bucket, mutated on every render frame.
-    mutable std::map<int, LumGlyphPovTracker> lumGlyphPovMap_;
+    mutable std::array<LumGlyphPovTracker, 101> lumGlyphPovMap_{};
 
     mutable std::mt19937 rng_{std::random_device{}()};
 };
