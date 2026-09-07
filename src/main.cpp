@@ -164,33 +164,26 @@ static void threadRender(DrmDisplay* drm,
         std::vector<int> cellYPixels((size_t)conCharHeight);
         std::array<const GlyphRaster*, 101> frameGlyphCache{};
 
-        if ((int)rowToCellY.size() != camFrameWidth) {
-            rowToCellY.resize((size_t)camFrameWidth);
-            for (int py = 0; py < camFrameWidth; ++py) {
-                int cy = py * conCharHeight / camFrameWidth;
-                if (cy >= conCharHeight) cy = conCharHeight - 1;
-                rowToCellY[(size_t)py] = cy;
-            }
-        }
-        if ((int)colToCellX.size() != camFrameHeight) {
-            colToCellX.resize((size_t)camFrameHeight);
-            for (int px = 0; px < camFrameHeight; ++px) {
-                int cx = px * conCharWidth / camFrameHeight;
-                if (cx >= conCharWidth) cx = conCharWidth - 1;
-                colToCellX[(size_t)px] = cx;
-            }
-        }
-        if ((int)cellXPixels.size() != conCharWidth) {
-            cellXPixels.resize((size_t)conCharWidth);
-            for (int cx = 0; cx < conCharWidth; ++cx) {
-                cellXPixels[(size_t)cx] = cx * cellWidth;
-            }
-        }
-        if ((int)cellYPixels.size() != conCharHeight) {
+        rowToCellY.resize((size_t)camFrameWidth);
+        colToCellX.resize((size_t)camFrameHeight);
+        cellXPixels.resize((size_t)conCharWidth);
             cellYPixels.resize((size_t)conCharHeight);
-            for (int cy = 0; cy < conCharHeight; ++cy) {
-                cellYPixels[(size_t)cy] = cy * cellHeight;
-            }
+
+        for (int py = 0; py < camFrameWidth; ++py) {
+            int cy = py * conCharHeight / camFrameWidth;
+            if (cy >= conCharHeight) cy = conCharHeight - 1;
+            rowToCellY[(size_t)py] = cy;
+        }
+        for (int px = 0; px < camFrameHeight; ++px) {
+            int cx = px * conCharWidth / camFrameHeight;
+            if (cx >= conCharWidth) cx = conCharWidth - 1;
+            colToCellX[(size_t)px] = cx;
+        }
+        for (int cx = 0; cx < conCharWidth; ++cx) {
+            cellXPixels[(size_t)cx] = cx * cellWidth;
+        }
+        for (int cy = 0; cy < conCharHeight; ++cy) {
+            cellYPixels[(size_t)cy] = cy * cellHeight;
         }
 
         constexpr int MID = 128;
