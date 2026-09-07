@@ -157,6 +157,8 @@ static void threadRender(DrmDisplay* drm,
             int    count    = 0;
         };
         std::vector<CellAccum> accums((size_t)cellCount);
+        dbgLog("cellCount=%d  accums.size()=%zu  cellStats.size()=%zu",
+               cellCount, accums.size(), cellStats.size());
 
         std::vector<int> rowToCellY;
         std::vector<int> colToCellX;
@@ -220,6 +222,7 @@ static void threadRender(DrmDisplay* drm,
                     uint8_t g = row[px * 3 + 1];
                     uint8_t b = row[px * 3 + 2];
                     int sum = (int)r + (int)g + (int)b;
+                    dbgLog("accums[%d]", cy * conCharWidth + cx);
                     CellAccum& acc = accums[(size_t)(cy * conCharWidth + cx)];
                     acc.sumRGB += sum;
                     ++acc.count;
