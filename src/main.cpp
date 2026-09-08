@@ -212,6 +212,7 @@ static void threadRender(DrmDisplay* drm,
 
             // ── scan-frame ────────────────────────────────────────────────
             for (auto& a : accums) { a = {}; }
+            dbgLog("Loop 1");
 
             for (int py = 0; py < fH; ++py) {
                 int cy = rowToCellY[(size_t)py];
@@ -222,14 +223,16 @@ static void threadRender(DrmDisplay* drm,
                     uint8_t g = row[px * 3 + 1];
                     uint8_t b = row[px * 3 + 2];
                     int sum = (int)r + (int)g + (int)b;
-                    dbgLog("accums[%d]", cy * conCharWidth + cx);
-                    CellAccum& acc = accums[(size_t)(cy * conCharWidth + cx)];
+                    dbgLog("accums[%d]", cy + cx);
+                    CellAccum& acc = accums[(size_t)(cy + cx)];  // cy * conCharWidth + cx
                     acc.sumRGB += sum;
                     ++acc.count;
                     if (sum / 3 < MID)       { acc.sumDark  += sum; ++acc.nDark;  }
                     else                      { acc.sumLight += sum; ++acc.nLight; }
                 }
             }
+
+            dbgLog("Loop 2");
 
             for (int i = 0; i < cellCount; ++i) {
                 const CellAccum& acc = accums[(size_t)i];
@@ -265,6 +268,8 @@ static void threadRender(DrmDisplay* drm,
             drm->clearBackBuffer();
             uint8_t* fb = drm->getBackBuffer();
             frameGlyphCache.fill(nullptr);
+
+            dbgLog("Loop 3");
 
             int glyphsBlitted = 0;
             for (int cy = 0; cy < conCharHeight; ++cy) {
